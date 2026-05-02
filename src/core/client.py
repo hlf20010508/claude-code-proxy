@@ -1,28 +1,30 @@
 import asyncio
 import json
+import logging
 from fastapi import HTTPException
 from typing import Optional, AsyncGenerator, Dict, Any
 from openai import AsyncOpenAI, AsyncAzureOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai._exceptions import APIError, RateLimitError, AuthenticationError, BadRequestError
 
+logger = logging.getLogger(__name__)
+
+
 class OpenAIClient:
     """Async OpenAI client with cancellation support."""
-    
+
     def __init__(self, api_key: str, base_url: str, timeout: int = 90, api_version: Optional[str] = None, custom_headers: Optional[Dict[str, str]] = None):
         self.api_key = api_key
         self.base_url = base_url
         self.custom_headers = custom_headers or {}
-        
-        # Prepare default headers
-        default_headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "claude-proxy/1.0.0"
-        }
-        
-        # Merge custom headers with default headers
-        all_headers = {**default_headers, **self.custom_headers}
-        
+        self.user_agent = "KimiCLI/1.39.0"
+
+        # Log custom headers for debugging
+        if self.custom_headers:
+            logger.info(f"Custom headers configured: {list(self.custom_headers.keys())}")
+        else:
+            logger.info("No custom headers configured")
+
         # Detect if using Azure and instantiate the appropriate client
         if api_version:
             self.client = AsyncAzureOpenAI(
@@ -30,29 +32,35 @@ class OpenAIClient:
                 azure_endpoint=base_url,
                 api_version=api_version,
                 timeout=timeout,
-                default_headers=all_headers
             )
         else:
             self.client = AsyncOpenAI(
                 api_key=api_key,
                 base_url=base_url,
                 timeout=timeout,
-                default_headers=all_headers
             )
         self.active_requests: Dict[str, asyncio.Event] = {}
     
     async def create_chat_completion(self, request: Dict[str, Any], request_id: Optional[str] = None) -> Dict[str, Any]:
         """Send chat completion to OpenAI API with cancellation support."""
-        
+
         # Create cancellation token if request_id provided
         if request_id:
             cancel_event = asyncio.Event()
             self.active_requests[request_id] = cancel_event
-        
+
         try:
+            # Merge custom headers and User-Agent into request via extra_headers
+            request_copy = dict(request)
+            extra_headers = request_copy.pop("extra_headers", {}) or {}
+            extra_headers["User-Agent"] = self.user_agent
+            extra_headers.update(self.custom_headers)
+            request_copy["extra_headers"] = extra_headers
+            logger.debug(f"Sending request with User-Agent={self.user_agent}, custom headers: {list(self.custom_headers.keys())}")
+
             # Create task that can be cancelled
             completion_task = asyncio.create_task(
-                self.client.chat.completions.create(**request)
+                self.client.chat.completions.create(**request_copy)
             )
             
             if request_id:
@@ -102,21 +110,31 @@ class OpenAIClient:
     
     async def create_chat_completion_stream(self, request: Dict[str, Any], request_id: Optional[str] = None) -> AsyncGenerator[str, None]:
         """Send streaming chat completion to OpenAI API with cancellation support."""
-        
+
         # Create cancellation token if request_id provided
         if request_id:
             cancel_event = asyncio.Event()
             self.active_requests[request_id] = cancel_event
-        
+
         try:
+            # Merge custom headers and User-Agent into request via extra_headers
+            request_copy = dict(request)
+            extra_headers = request_copy.pop("extra_headers", {}) or {}
+            extra_headers["User-Agent"] = self.user_agent
+            extra_headers.update(self.custom_headers)
+            request_copy["extra_headers"] = extra_headers
+            logger.debug(
+                f"Sending streaming request with User-Agent={self.user_agent}, custom headers: {list(self.custom_headers.keys())}"
+            )
+
             # Ensure stream is enabled
-            request["stream"] = True
-            if "stream_options" not in request:
-                request["stream_options"] = {}
-            request["stream_options"]["include_usage"] = True
-            
+            request_copy["stream"] = True
+            if "stream_options" not in request_copy:
+                request_copy["stream_options"] = {}
+            request_copy["stream_options"]["include_usage"] = True
+
             # Create the streaming completion
-            streaming_completion = await self.client.chat.completions.create(**request)
+            streaming_completion = await self.client.chat.completions.create(**request_copy)
             
             async for chunk in streaming_completion:
                 # Check for cancellation before yielding each chunk

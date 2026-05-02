@@ -1,19 +1,20 @@
-from fastapi import APIRouter, HTTPException, Request, Header, Depends
-from fastapi.responses import JSONResponse, StreamingResponse
-from datetime import datetime
 import uuid
+from datetime import datetime
 from typing import Optional
 
-from src.core.config import config
-from src.core.logging import logger
-from src.core.client import OpenAIClient
-from src.models.claude import ClaudeMessagesRequest, ClaudeTokenCountRequest
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.responses import JSONResponse, StreamingResponse
+
 from src.conversion.request_converter import convert_claude_to_openai
 from src.conversion.response_converter import (
-    convert_openai_to_claude_response,
     convert_openai_streaming_to_claude_with_cancellation,
+    convert_openai_to_claude_response,
 )
+from src.core.client import OpenAIClient
+from src.core.config import config
+from src.core.logging import logger
 from src.core.model_manager import model_manager
+from src.models.claude import ClaudeMessagesRequest, ClaudeTokenCountRequest
 
 router = APIRouter()
 
@@ -211,6 +212,78 @@ async def test_connection():
         )
 
 
+def _build_model_capabilities():
+    return {
+        "batch": {"supported": True},
+        "citations": {"supported": True},
+        "code_execution": {"supported": True},
+        "context_management": {
+            "clear_thinking_20251015": {"supported": True},
+            "clear_tool_uses_20250919": {"supported": True},
+            "compact_20260112": {"supported": True},
+            "supported": True,
+        },
+        "effort": {
+            "high": {"supported": True},
+            "low": {"supported": True},
+            "max": {"supported": True},
+            "medium": {"supported": True},
+            "supported": True,
+            "xhigh": {"supported": True},
+        },
+        "image_input": {"supported": True},
+        "pdf_input": {"supported": True},
+        "structured_outputs": {"supported": True},
+        "thinking": {
+            "supported": True,
+            "types": {
+                "adaptive": {"supported": True},
+                "enabled": {"supported": True},
+            },
+        },
+    }
+
+
+@router.get("/v1/models")
+async def list_models(_: None = Depends(validate_api_key)):
+    """List available models in Claude API format"""
+    models = [
+        {
+            "id": "claude-opus-4-6",
+            "capabilities": _build_model_capabilities(),
+            "created_at": "2026-02-04T00:00:00Z",
+            "display_name": "Claude Opus 4.6",
+            "max_input_tokens": 0,
+            "max_tokens": 0,
+            "type": "model",
+        },
+        {
+            "id": "claude-sonnet-4-6",
+            "capabilities": _build_model_capabilities(),
+            "created_at": "2026-02-04T00:00:00Z",
+            "display_name": "Claude Sonnet 4.6",
+            "max_input_tokens": 0,
+            "max_tokens": 0,
+            "type": "model",
+        },
+        {
+            "id": "claude-haiku-4-5",
+            "capabilities": _build_model_capabilities(),
+            "created_at": "2026-02-04T00:00:00Z",
+            "display_name": "Claude Haiku 4.5",
+            "max_input_tokens": 0,
+            "max_tokens": 0,
+            "type": "model",
+        },
+    ]
+    return {
+        "data": models,
+        "first_id": models[0]["id"],
+        "has_more": False,
+        "last_id": models[-1]["id"],
+    }
+
+
 @router.get("/")
 async def root():
     """Root endpoint"""
@@ -227,6 +300,7 @@ async def root():
         },
         "endpoints": {
             "messages": "/v1/messages",
+            "models": "/v1/models",
             "count_tokens": "/v1/messages/count_tokens",
             "health": "/health",
             "test_connection": "/test-connection",
